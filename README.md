@@ -20,12 +20,12 @@ Build a web server which has some endpoint to receive a user id and return a lis
 
 Note that users have no limit on how many assets they want on their favourites so your service will need to provide a reasonable response time.
 
-A working server application with functional API is required, along with a clear readme.md. Useful and passing tests would be also be viewed favourably 
+A working server application with functional API is required, along with a clear readme.md. Useful and passing tests would be also be viewed favourably
 
 It is appreciated, though not required, if a Dockerfile is included.
 
 ## Submission
 
-Just a make a PR to the current repo!
+Just create a fork from the current repo and send it to us!
 
-Good luck, potential colleague! 
+Good luck, potential colleague!
