@@ -31,6 +31,8 @@ ARG HOST
 
 ENV PORT=${PORT}
 ENV HOST=${HOST}
+# Remove or change this to "debug"
+ENV GIN_MODE=release
 
 EXPOSE ${PORT}
 USER nonroot:nonroot
