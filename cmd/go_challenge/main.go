@@ -30,7 +30,7 @@ func resolveAddress(host, port string) string {
 func main() {
 
 	database := getSqliteDB()
-	db.FillDB(database)
+ 	// db.FillDB(database)
 	engine := api.CreateEngine(database)
 
 	addr := resolveAddress(os.Getenv("HOST"), os.Getenv("PORT"))
