@@ -1,3 +1,4 @@
+// Package db defines database schema using gorm struct models.
 package db
 
 import (
@@ -7,6 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// FillDB adds test data to the database
 func FillDB(database *gorm.DB) {
 	// TODO: try this in one go
 	user := User{Username: "test"}
@@ -30,6 +32,7 @@ func FillDB(database *gorm.DB) {
 	database.Create(&audience)
 }
 
+// Migrate migrates changes in the models into databse `db`
 func Migrate(db *gorm.DB) {
 	db.AutoMigrate(&User{})
 	db.AutoMigrate(&Asset{})
@@ -46,7 +49,7 @@ type User struct {
 	Favourites   []*Asset `gorm:"many2many:user_assets;" json:"-"`
 }
 
-// When Asset gets deleted, all of the linked types get deleted
+// Note: When Asset gets deleted, all of the linked types get deleted
 type Asset struct {
 	ID       uint      `gorm:"primarykey;not null;autoIncrement:true" json:"id"`
 	Users    []*User   `gorm:"many2many:user_assets;" json:"-"`

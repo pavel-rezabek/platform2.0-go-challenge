@@ -2,6 +2,8 @@ package api
 
 import "github.com/GlobalWebIndex/platform2.0-go-challenge/db"
 
+// This file has API models on which requests are validateds
+
 type User struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`

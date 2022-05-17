@@ -16,6 +16,9 @@ var jwtKey = []byte("supersecretkey")
 
 const TokenExpiration = 1 * time.Hour
 
+// GenerateJWT creates a JWT token using `jwtKey` that is valid
+// for the duration of `TokenExpiration`.
+// Returns the jwt string and error, if there was problem signing the key.
 func GenerateJWT(userId uint) (tokenString string, err error) {
 	expirationTime := time.Now().Add(TokenExpiration)
 	claims := &jwt.StandardClaims{
@@ -27,6 +30,8 @@ func GenerateJWT(userId uint) (tokenString string, err error) {
 	return
 }
 
+// ParseToken parses `signedToken` into claims struct.
+// Returns pointer to StandardClaims struct and error, if there was problem with parsing.
 func ParseToken(signedToken string) (*jwt.StandardClaims, error) {
 	token, err := jwt.ParseWithClaims(
 		signedToken,
@@ -54,6 +59,10 @@ func ParseToken(signedToken string) (*jwt.StandardClaims, error) {
 
 }
 
+// VerifyID checks that the "jwt_sub" key in `c` is the same as `id`.
+// This serves as authorization on endpoints, checking that user is accessing
+// only their respecitve resources.
+// Returns error if the id does not match.
 func VerifyID(c *gin.Context, id int) error {
 	tokenSub := c.GetString("jwt_sub")
 	tokenId, _ := strconv.Atoi(tokenSub)
@@ -63,6 +72,9 @@ func VerifyID(c *gin.Context, id int) error {
 	return nil
 }
 
+// AuthMiddleware provides a handler function that checks for "Authorization" header
+// to be a valid Bearer JWT token.
+// The handler function aborts with 401 status if there is a problem with the token.
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := c.GetHeader("Authorization")
