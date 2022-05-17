@@ -12,11 +12,96 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// TODO: optionally wrap these functions under struct to give them access
-//		 to the `db` struct
+type UserController struct {
+	db            *gorm.DB
+	SessionConfig *gorm.Session
+}
+
+func (uc *UserController) GetSession() *gorm.DB {
+	return uc.db.Session(uc.SessionConfig)
+}
+
+// POST /token
+func (uc *UserController) PostToken(c *gin.Context) {
+	var apiUser User
+	if err := c.ShouldBindJSON(&apiUser); err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusBadRequest,
+			gin.H{
+				"error":   err.Error(),
+				"message": "Invalid input",
+			},
+		)
+		return
+	}
+
+	dbUser, err := apiUser.getDBUser()
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusBadRequest,
+			gin.H{
+				"error":   err.Error(),
+				"message": "Invalid input",
+			},
+		)
+		return
+	}
+	session := uc.GetSession()
+	result := session.Limit(1).Find(&dbUser)
+	if result.Error != nil {
+		c.AbortWithStatusJSON(
+			http.StatusBadRequest,
+			gin.H{
+				"error":   result.Error.Error(),
+				"message": "DB problem.",
+			},
+		)
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.AbortWithStatusJSON(
+			http.StatusUnauthorized,
+			gin.H{
+				"error":   "Unauthorized",
+				"message": "Invalid credentials",
+			},
+		)
+		return
+	}
+
+	credentialError := dbUser.CheckPassword(apiUser.Password)
+	if credentialError != nil {
+		c.AbortWithStatusJSON(
+			http.StatusUnauthorized,
+			gin.H{
+				"error":   "Unauthorized",
+				"message": "Invalid credentials",
+			},
+		)
+		return
+	}
+
+	tokenString, err := GenerateJWT(dbUser.ID)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusUnauthorized,
+			gin.H{
+				"error":   "Unauthorized",
+				"message": "Invalid credentials",
+			},
+		)
+		return
+	}
+	c.PureJSON(http.StatusOK, gin.H{
+		"id":         dbUser.ID,
+		"token":      tokenString,
+		"token_type": "Bearer",
+		"expires_in": TokenExpiration.Seconds(),
+	})
+}
 
 // POST /users
-func PostUsers(c *gin.Context) {
+func (uc *UserController) PostUsers(c *gin.Context) {
 	var apiUser User
 
 	if err := c.ShouldBindJSON(&apiUser); err != nil {
@@ -41,7 +126,7 @@ func PostUsers(c *gin.Context) {
 		)
 		return
 	}
-	session := db.GetDB()
+	session := uc.GetSession()
 	result := session.Create(&dbUser)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -67,10 +152,10 @@ func PostUsers(c *gin.Context) {
 }
 
 // GET /users
-func GetUsers(c *gin.Context) {
+func (uc *UserController) GetUsers(c *gin.Context) {
 	var dbUsers []db.User
 
-	session := db.GetDB()
+	session := uc.GetSession()
 	result := session.Find(&dbUsers)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -92,12 +177,12 @@ func GetUsers(c *gin.Context) {
 }
 
 // GET /users/:id
-func GetUserByID(c *gin.Context) {
+func (uc *UserController) GetUserByID(c *gin.Context) {
 	id := c.Param("id")
 	userId, _ := strconv.Atoi(id)
 	var dbUser = db.User{ID: uint(userId)}
 
-	session := db.GetDB()
+	session := uc.GetSession()
 	// Prevent ErrRecordNotFound
 	result := session.Limit(1).Find(&dbUser)
 	if result.Error != nil {
@@ -120,12 +205,24 @@ func GetUserByID(c *gin.Context) {
 }
 
 // DELETE /users/:id
-func DeleteUserByID(c *gin.Context) {
+// User can only delete itself
+func (uc *UserController) DeleteUserByID(c *gin.Context) {
 	id := c.Param("id")
 	userId, _ := strconv.Atoi(id)
+	err := VerifyID(c, userId)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{
+				"error":   "Forbidden",
+				"message": "You do not have access to this resource.",
+			},
+		)
+		return
+	}
 	var dbUser = db.User{ID: uint(userId)}
 
-	session := db.GetDB()
+	session := uc.GetSession()
 	result := session.Delete(&dbUser)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -148,9 +245,20 @@ func DeleteUserByID(c *gin.Context) {
 
 // POST /users/:id/favourites
 // PostFavourites adds an Asset to favourite Assets of a User
-func PostFavourites(c *gin.Context) {
+func (uc *UserController) PostFavourites(c *gin.Context) {
 	id := c.Param("id")
 	userId, _ := strconv.Atoi(id)
+	err := VerifyID(c, userId)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{
+				"error":   "Forbidden",
+				"message": "You do not have access to this resource.",
+			},
+		)
+		return
+	}
 	var dbUser = db.User{ID: uint(userId)}
 
 	var apiFavourite Favourite
@@ -177,9 +285,9 @@ func PostFavourites(c *gin.Context) {
 		)
 		return
 	}
-	session := db.GetDB()
+	session := uc.GetSession()
 
-	err = session.Model(&dbUser).Association("Favourites").Append(&dbAsset)
+	err = session.Preload(clause.Associations).Model(&dbUser).Association("Favourites").Append(&dbAsset)
 	if err != nil {
 		c.AbortWithStatusJSON(
 			http.StatusBadRequest,
@@ -200,15 +308,26 @@ func PostFavourites(c *gin.Context) {
 }
 
 // GET /users/:id/favourites
-func GetFavourites(c *gin.Context) {
+func (uc *UserController) GetFavourites(c *gin.Context) {
 	id := c.Param("id")
 	userId, _ := strconv.Atoi(id)
+	err := VerifyID(c, userId)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{
+				"error":   "Forbidden",
+				"message": "You do not have access to this resource.",
+			},
+		)
+		return
+	}
 	var dbUser = db.User{ID: uint(userId)}
 	var dbAssets []*db.Asset
 
-	session := db.GetDB()
+	session := uc.GetSession()
 	// Prevent ErrRecordNotFound
-	err := session.Preload(clause.Associations).Model(&dbUser).Association("Favourites").Find(&dbAssets)
+	err = session.Preload(clause.Associations).Model(&dbUser).Association("Favourites").Find(&dbAssets)
 	if err != nil {
 		c.AbortWithStatusJSON(
 			http.StatusBadRequest,
@@ -229,43 +348,70 @@ func GetFavourites(c *gin.Context) {
 }
 
 // GET /users/:id/favourites/:favId
-func GetFavouriteByID(c *gin.Context) {
+func (uc *UserController) GetFavouriteByID(c *gin.Context) {
 	id := c.Param("id")
-	favId := c.Param("favId")
 	userId, _ := strconv.Atoi(id)
+	err := VerifyID(c, userId)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{
+				"error":   "Forbidden",
+				"message": "You do not have access to this resource.",
+			},
+		)
+		return
+	}
+	favId := c.Param("favId")
 	assetId, _ := strconv.Atoi(favId)
 	var dbUser = db.User{ID: uint(userId)}
-	var dbAsset = db.Asset{ID: uint(assetId)}
+	var dbAssets []*db.Asset
 
-	session := db.GetDB()
+	session := uc.GetSession()
 	// Prevent ErrRecordNotFound
-	err := session.Preload(clause.Associations).Model(&dbUser).Association("Favourites").Find(&dbAsset)
-	if err != nil {
+	// Load only assets that belong to the user and have the correct id (which should be 0 or 1)
+	result := session.Debug().Model(&db.Asset{ID: uint(assetId)}).Joins("INNER JOIN user_assets ua ON ua.asset_id = assets.id AND ua.user_id = ?", dbUser.ID).Preload(clause.Associations).Find(&dbAssets)
+	if result.Error != nil {
 		c.AbortWithStatusJSON(
 			http.StatusBadRequest,
 			gin.H{
-				"error":   err.Error(),
+				"error":   result.Error.Error(),
 				"message": "DB problem.",
 			},
 		)
 		return
+	}
+	if result.RowsAffected == 0 {
+		c.Status(http.StatusNotFound)
+		return
 	} else {
-		c.PureJSON(http.StatusOK, dbAsset)
+		c.PureJSON(http.StatusOK, dbAssets[0])
 		return
 	}
 }
 
 // DELETE /users/:id/favourites/:favId
-func DeleteFavouriteByID(c *gin.Context) {
+func (uc *UserController) DeleteFavouriteByID(c *gin.Context) {
 	id := c.Param("id")
-	favId := c.Param("favId")
 	userId, _ := strconv.Atoi(id)
+	err := VerifyID(c, userId)
+	if err != nil {
+		c.AbortWithStatusJSON(
+			http.StatusForbidden,
+			gin.H{
+				"error":   "Forbidden",
+				"message": "You do not have access to this resource.",
+			},
+		)
+		return
+	}
+	favId := c.Param("favId")
 	assetId, _ := strconv.Atoi(favId)
 	var dbUser = db.User{ID: uint(userId)}
 	var dbAsset = db.Asset{ID: uint(assetId)}
 
-	session := db.GetDB()
-	err := session.Model(&dbUser).Association("Favourites").Delete(&dbAsset)
+	session := uc.GetSession()
+	err = session.Model(&dbUser).Association("Favourites").Delete(&dbAsset)
 	if err != nil {
 		c.AbortWithStatusJSON(
 			http.StatusBadRequest,
@@ -281,11 +427,20 @@ func DeleteFavouriteByID(c *gin.Context) {
 	}
 }
 
+type AssetController struct {
+	db            *gorm.DB
+	SessionConfig *gorm.Session
+}
+
+func (ac *AssetController) GetSession() *gorm.DB {
+	return ac.db.Session(ac.SessionConfig)
+}
+
 // GET /assets
-func GetAssets(c *gin.Context) {
+func (ac *AssetController) GetAssets(c *gin.Context) {
 	var dbAssets []db.Asset
 
-	session := db.GetDB()
+	session := ac.GetSession()
 	result := session.Preload(clause.Associations).Preload("Audience.Characteristics").Find(&dbAssets)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -307,7 +462,7 @@ func GetAssets(c *gin.Context) {
 }
 
 // POST /assets
-func PostAssets(c *gin.Context) {
+func (ac *AssetController) PostAssets(c *gin.Context) {
 	var apiAsset Asset
 
 	if err := c.ShouldBindJSON(&apiAsset); err != nil {
@@ -332,7 +487,7 @@ func PostAssets(c *gin.Context) {
 		)
 		return
 	}
-	session := db.GetDB()
+	session := ac.GetSession()
 	result := session.Create(&dbAsset)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -354,12 +509,12 @@ func PostAssets(c *gin.Context) {
 }
 
 // GET /assets/:id
-func GetAssetByID(c *gin.Context) {
+func (ac *AssetController) GetAssetByID(c *gin.Context) {
 	id := c.Param("id")
 	assetId, _ := strconv.Atoi(id)
 	var dbAsset = db.Asset{ID: uint(assetId)}
 
-	session := db.GetDB()
+	session := ac.GetSession()
 	// Prevent ErrRecordNotFound
 	result := session.Preload(clause.Associations).Preload("Audience.Characteristics").Find(&dbAsset)
 	if result.Error != nil {
@@ -382,7 +537,7 @@ func GetAssetByID(c *gin.Context) {
 }
 
 // PUT /assets/:id
-func PutAssetByID(c *gin.Context) {
+func (ac *AssetController) PutAssetByID(c *gin.Context) {
 	id := c.Param("id")
 	assetId, _ := strconv.Atoi(id)
 	var apiAsset Asset
@@ -410,7 +565,7 @@ func PutAssetByID(c *gin.Context) {
 		return
 	}
 
-	session := db.GetDB()
+	session := ac.GetSession()
 	result := session.Where(db.Asset{ID: uint(assetId)}).FirstOrCreate(&dbAsset)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(
@@ -436,7 +591,7 @@ func PutAssetByID(c *gin.Context) {
 }
 
 // PATCH /assets/:id
-func PatchAssetByID(c *gin.Context) {
+func (ac *AssetController) PatchAssetByID(c *gin.Context) {
 	id := c.Param("id")
 	assetId, _ := strconv.Atoi(id)
 	var apiAsset Asset
@@ -464,7 +619,7 @@ func PatchAssetByID(c *gin.Context) {
 		return
 	}
 
-	session := db.GetDB()
+	session := ac.GetSession()
 	// Get asset from db, modify changed fields, save
 	dbAsset := db.Asset{ID: uint(assetId)}
 	result := session.Preload(clause.Associations).Preload("Audience.Characteristics").Find(&dbAsset)
@@ -529,12 +684,12 @@ func PatchAssetByID(c *gin.Context) {
 }
 
 // DELETE /assets/:id
-func DeleteAssetByID(c *gin.Context) {
+func (ac *AssetController) DeleteAssetByID(c *gin.Context) {
 	id := c.Param("id")
 	assetId, _ := strconv.Atoi(id)
 	dbAsset := db.Asset{ID: uint(assetId)}
 
-	session := db.GetDB()
+	session := ac.GetSession()
 	result := session.Delete(&dbAsset)
 	if result.Error != nil {
 		c.AbortWithStatusJSON(

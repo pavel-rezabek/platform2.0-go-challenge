@@ -4,36 +4,18 @@ import (
 	"errors"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
-var database *gorm.DB
-
-func GetDB() *gorm.DB {
-	if database != nil {
-		return database
-	} else {
-		db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-		if err != nil {
-			panic("Failed to connect to database")
-		}
-		Migrate(db)
-		database = db
-		return database
-	}
-}
-
-func FillDB() {
+func FillDB(database *gorm.DB) {
 	// TODO: try this in one go
-	session := GetDB()
 	user := User{Username: "test"}
 	user.SetPassword("testpass")
-	session.Create(&user)
+	database.Create(&user)
 
 	// Create the assets
 	var assets = []Asset{{ID: 1}, {ID: 2}, {ID: 3}}
-	session.Create(&assets)
+	database.Create(&assets)
 	// Fill the assets
 	var chart = Chart{Title: "test"}
 	chart.Asset = assets[0]
@@ -43,9 +25,9 @@ func FillDB() {
 		Asset:           assets[2],
 		Characteristics: []*Characteristic{{Gender: "M", BirthCountry: "Czech Republic"}},
 	}
-	session.Create(&chart)
-	session.Create(&insight)
-	session.Create(&audience)
+	database.Create(&chart)
+	database.Create(&insight)
+	database.Create(&audience)
 }
 
 func Migrate(db *gorm.DB) {
@@ -66,7 +48,7 @@ type User struct {
 
 // When Asset gets deleted, all of the linked types get deleted
 type Asset struct {
-	ID       uint      `gorm:"primarykey;not null;autoIncrement:true"`
+	ID       uint      `gorm:"primarykey;not null;autoIncrement:true" json:"id"`
 	Users    []*User   `gorm:"many2many:user_assets;" json:"-"`
 	Chart    *Chart    `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"chart,omitempty"`
 	Insight  *Insight  `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"insight,omitempty"`
